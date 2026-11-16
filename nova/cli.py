@@ -67,6 +67,7 @@ def run_cli():
     parser = argparse.ArgumentParser(description="Nova - Personal AI Assistant for macOS")
     parser.add_argument("--model", type=str, default=MODEL_NAME, help="Ollama model to use")
     parser.add_argument("--voice", action="store_true", help="Enable spoken voice output via macOS say")
+    parser.add_argument("--talk", action="store_true", help="Launch in hands-free voice conversation mode (mic + speaker)")
     parser.add_argument("--check-system", action="store_true", help="Run system diagnostics")
     parser.add_argument("--auto-confirm", action="store_true", help="Auto-confirm safe actions without prompt")
     args = parser.parse_args()
@@ -77,19 +78,21 @@ def run_cli():
 
     display_banner()
 
+    enable_voice = args.voice or args.talk
     agent = NovaAgent(
         model_name=args.model,
-        enable_voice=args.voice,
+        enable_voice=enable_voice,
         auto_confirm=args.auto_confirm
     )
 
     console.print(Panel(
         f"[bold green]Nova is active![/bold green]\n"
         f"• Model: [cyan]{args.model}[/cyan]\n"
-        f"• Voice output: [cyan]{'Enabled (say)' if args.voice else 'Disabled (add --voice to enable)'}[/cyan]\n"
+        f"• Voice output (Speaker): [cyan]{'Enabled (say)' if enable_voice else 'Disabled (add --voice to enable)'}[/cyan]\n"
+        f"• Voice input (Microphone): [cyan]{'Ready (Type /mic to talk, or run with --talk)' if agent.stt.is_available() else 'Not available'}[/cyan]\n"
         f"• Type [bold yellow]'exit'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to exit.\n"
-        f"• Type [bold yellow]'/tools'[/bold yellow] to list available agent actions.\n"
-        f"• Type [bold yellow]'/voice'[/bold yellow] to toggle spoken response.",
+        f"• Type [bold yellow]'/mic'[/bold yellow] to speak into your microphone.\n"
+        f"• Type [bold yellow]'/tools'[/bold yellow] to list available agent actions.",
         title="Session Info",
         border_style="cyan"
     ))
@@ -99,9 +102,22 @@ def run_cli():
         console.print("[bold red]⚠️  Notice:[/bold red] Ollama daemon is not detected at [cyan]http://127.0.0.1:11434[/cyan].")
         console.print("   Please start it in another Terminal with: [bold green]ollama serve[/bold green]\n")
 
+    if args.talk:
+        agent.tts.speak("Hello Lakshana, I'm Nova. I'm ready to listen.", async_mode=True)
+
     while True:
         try:
-            user_input = console.input("[bold green]You[/bold green] > ").strip()
+            if args.talk:
+                prompt_text = "[bold green]Press ENTER to speak to Nova[/bold green] (or type text) > "
+            else:
+                prompt_text = "[bold green]You[/bold green] > "
+
+            user_input = console.input(prompt_text).strip()
+
+            # In talk mode, pressing Enter without text activates microphone
+            if args.talk and not user_input:
+                user_input = "/mic"
+
             if not user_input:
                 continue
 
@@ -110,6 +126,22 @@ def run_cli():
                 if agent.enable_voice:
                     agent.tts.speak("Goodbye! Have a productive day.")
                 break
+
+            if user_input.lower() in ("/mic", "/listen", "listen"):
+                if not agent.stt.is_available():
+                    console.print("[yellow]Whisper STT or sounddevice is not available. Please type your message.[/yellow]")
+                    continue
+
+                console.print("\n[bold red]🎙️  Listening... Speak your command now (5 seconds)![/bold red]")
+                with console.status("[bold red]Recording audio from microphone...[/bold red]"):
+                    transcription = agent.stt.listen_and_transcribe(duration=5)
+
+                if not transcription:
+                    console.print("[yellow]Didn't catch any speech. Please try speaking a little louder or type '/mic' again.[/yellow]\n")
+                    continue
+
+                console.print(f"[bold green]You (voice)[/bold green] > [italic cyan]{transcription}[/italic cyan]")
+                user_input = transcription
 
             if user_input.lower() == "/tools":
                 tools_table = Table(title="Nova Registered Tools")
@@ -148,6 +180,12 @@ def run_cli():
             console.print(f"\n[bold cyan]Nova[/bold cyan]:")
             console.print(Markdown(reply))
             console.print()
+
+        except KeyboardInterrupt:
+            console.print("\n[bold cyan]Nova:[/bold cyan] Goodbye!")
+            break
+        except Exception as e:
+            console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
 
         except KeyboardInterrupt:
             console.print("\n[bold cyan]Nova:[/bold cyan] Goodbye!")

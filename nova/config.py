@@ -11,6 +11,9 @@ default_nova_home = Path(os.getenv("NOVA_HOME", USER_HOME / ".nova"))
 
 try:
     default_nova_home.mkdir(parents=True, exist_ok=True)
+    test_file = default_nova_home / ".write_test"
+    test_file.touch()
+    test_file.unlink(missing_ok=True)
     NOVA_HOME = default_nova_home
 except (PermissionError, OSError):
     # Fallback to project directory if user home is restricted

@@ -33,14 +33,13 @@ class WhisperSTT:
     def transcribe_audio_file(self, audio_path: str) -> str:
         """Transcribes an audio file into text."""
         self._load_model()
-        segments, _ = self._model.transcribe(audio_path, beam_size=5)
+        segments, _ = self._model.transcribe(audio_path, beam_size=5, vad_filter=True)
         text = " ".join([segment.text for segment in segments]).strip()
         return text
 
     def listen_and_transcribe(self, duration: int = 5) -> Optional[str]:
         """
         Listens from the default microphone and transcribes.
-        Falls back gracefully if sounddevice/pyaudio is not installed.
         """
         try:
             import sounddevice as sd
@@ -49,10 +48,13 @@ class WhisperSTT:
             import wave
 
             sample_rate = 16000
-            print("\n🎙️  Listening... Speak now.")
             audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
             sd.wait()
-            print("Processing voice...")
+
+            # Check if audio is completely silent
+            max_amp = np.max(np.abs(audio_data))
+            if max_amp < 500:  # Noise threshold
+                return None
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tf:
                 with wave.open(tf.name, "wb") as wf:
@@ -62,7 +64,7 @@ class WhisperSTT:
                     wf.writeframes(audio_data.tobytes())
                 return self.transcribe_audio_file(tf.name)
         except ImportError:
-            logger.warning("sounddevice or numpy not installed. Voice recording unavailable.")
+            logger.warning("sounddevice or numpy not installed.")
             return None
         except Exception as e:
             logger.error(f"Error during audio listening: {e}")
