@@ -100,9 +100,14 @@ Run Nova in interactive text mode:
 python main.py
 ```
 
-Or enable voice responses:
+Enable spoken voice responses:
 ```bash
 python main.py --voice
+```
+
+Enable always-on hands-free **"Hey Nova"** wake word detection (no keyboard needed!):
+```bash
+python main.py --wake
 ```
 
 ---
