@@ -8,7 +8,10 @@ import numpy as np
 
 logger = logging.getLogger("nova.voice.wakeword")
 
-WAKE_WORDS = ["hey nova", "nova", "hi nova", "hello nova", "okay nova", "ok nova"]
+WAKE_WORDS = [
+    "hey nova", "nova", "hi nova", "hello nova", "okay nova", "ok nova",
+    "hey no va", "no va", "hi no va", "hey noba", "noba"
+]
 
 def play_chime(sound_name: str = "Ping"):
     """Plays a native macOS alert chime asynchronously."""
@@ -29,7 +32,7 @@ class ContinuousWakeWordListener:
         stt_engine: Optional[Any] = None,
         tts_engine: Optional[Any] = None,
         wake_words: Optional[List[str]] = None,
-        energy_threshold: int = 400
+        energy_threshold: int = 250
     ):
         if stt_engine is None:
             from nova.voice.stt import WhisperSTT
@@ -58,7 +61,6 @@ class ContinuousWakeWordListener:
         lower = clean.lower()
 
         for ww in sorted(self.wake_words, key=len, reverse=True):
-            # Check pattern with optional punctuation
             pattern = r'\b' + re.escape(ww) + r'\b[,.?!]?'
             match = re.search(pattern, lower)
             if match:
@@ -81,9 +83,14 @@ class ContinuousWakeWordListener:
         """
         import sounddevice as sd
 
+        # Wait for any prior TTS to finish before opening microphone
+        if self.tts:
+            self.tts.wait_until_done()
+        time.sleep(0.3)
+
         self._running = True
-        silence_limit_chunks = 7  # ~700ms of trailing silence ends speech
-        max_chunks = 90           # max ~9s of speech per command
+        silence_limit_chunks = 4  # 400ms of trailing silence ends speech
+        max_chunks = 45           # max 4.5s of speech per command (fast response)
 
         try:
             with sd.InputStream(
@@ -93,17 +100,18 @@ class ContinuousWakeWordListener:
                 blocksize=self.chunk_size
             ) as stream:
 
-                # Calibrate ambient noise floor for 400ms
+                # Calibrate ambient noise floor for 300ms in quiet
                 ambient_vals = []
-                for _ in range(4):
+                for _ in range(3):
                     d, _ = stream.read(self.chunk_size)
                     ambient_vals.append(np.sqrt(np.mean(d[:, 0].astype(np.float32)**2)))
                 noise_floor = np.mean(ambient_vals)
-                self.energy_threshold = max(350, int(noise_floor * 2.2))
+                # Keep threshold strictly bounded between 200 and 450 so it never misses speech
+                self.energy_threshold = max(200, min(450, int(noise_floor * 1.6)))
                 logger.info(f"Calibrated noise floor: {noise_floor:.1f}, speech threshold: {self.energy_threshold}")
 
                 if status_callback:
-                    status_callback("Ready! Listening for 'Hey Nova'...")
+                    status_callback(f"Listening for 'Hey Nova'... (Threshold: {self.energy_threshold})")
 
                 while self._running:
                     # Read 100ms
@@ -114,12 +122,12 @@ class ContinuousWakeWordListener:
                     # Speech started
                     if rms > self.energy_threshold:
                         if status_callback:
-                            status_callback("Speech detected... listening...")
+                            status_callback("Hearing voice... listening...")
 
                         recorded_frames = [audio_chunk]
                         silent_chunks = 0
 
-                        # Collect speech until trailing silence
+                        # Collect speech until trailing silence or max limit
                         while self._running and silent_chunks < silence_limit_chunks and len(recorded_frames) < max_chunks:
                             chunk_data, _ = stream.read(self.chunk_size)
                             chunk = chunk_data[:, 0]
@@ -133,8 +141,8 @@ class ContinuousWakeWordListener:
 
                         full_audio = np.concatenate(recorded_frames)
 
-                        # Audio must be at least ~0.7 seconds
-                        if len(full_audio) < self.sample_rate * 0.7:
+                        # Audio must be at least ~0.5 seconds
+                        if len(full_audio) < self.sample_rate * 0.5:
                             if status_callback:
                                 status_callback("Listening for 'Hey Nova'...")
                             continue
@@ -178,11 +186,12 @@ class ContinuousWakeWordListener:
                             if self._running:
                                 stream.start()
                                 if status_callback:
-                                    status_callback("Ready! Listening for 'Hey Nova'...")
+                                    status_callback("Listening for 'Hey Nova'...")
 
                         else:
+                            # Heard something else, print feedback
                             if status_callback:
-                                status_callback("Listening for 'Hey Nova'...")
+                                status_callback(f"Heard: '{text[:25]}' (Say 'Hey Nova' to activate)")
 
         except Exception as e:
             logger.error(f"Error in continuous wake word listener: {e}")

@@ -104,6 +104,9 @@ def run_cli():
         ))
 
         agent.tts.speak("Nova is listening. Say Hey Nova whenever you need me.", async_mode=True)
+        agent.tts.wait_until_done()
+        import time
+        time.sleep(0.3)
 
         from nova.voice.wakeword import ContinuousWakeWordListener
         listener = ContinuousWakeWordListener(stt_engine=agent.stt, tts_engine=agent.tts)
