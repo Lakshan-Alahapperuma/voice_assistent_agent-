@@ -120,11 +120,14 @@ python main.py --wake
 - *"Create a meeting notes file on my Desktop named notes.txt with today's action items."*
 - *"Read the first 50 lines of project_plan.md."*
 
-### 2. Mac Automation
-- *"Open Safari and Spotify."*
+### 2. Mac & Media Automation
+- *"Open Safari and Notes."*
+- *"Open YouTube and play lofi jazz music."*
+- *"Play Coldplay on Spotify."*
+- *"Search Google for latest tech news."*
+- *"Pause the music."* / *"Next song."*
 - *"Set system volume to 40%."*
 - *"Show me system diagnostics and disk space."*
-- *"Send a macOS notification that our build has completed."*
 
 ### 3. Email Integration
 - *"Draft an email to my manager with the subject 'Weekly Update' saying the deliverables are ready."*
