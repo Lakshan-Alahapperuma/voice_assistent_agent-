@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Nova local database and backups
+.nova/
+*.db
+backups/
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
