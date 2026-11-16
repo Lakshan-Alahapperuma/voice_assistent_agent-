@@ -30,6 +30,99 @@ class OpenAppTool(BaseTool):
         except Exception as e:
             return {"status": "error", "message": f"Failed to open app: {str(e)}"}
 
+class CloseAppTool(BaseTool):
+    name = "close_app"
+    description = "Closes or quits a running macOS application (e.g. 'Safari', 'Notes', 'Spotify', 'Music')."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "app_name": {
+                "type": "string",
+                "description": "Name of the application to quit (e.g. 'Safari', 'Notes', 'Spotify')."
+            },
+            "force": {
+                "type": "boolean",
+                "description": "If true, forcefully terminates the application process (default: false)."
+            }
+        },
+        "required": ["app_name"]
+    }
+
+    def execute(self, app_name: str, force: bool = False) -> Dict[str, Any]:
+        clean_name = app_name.strip()
+        escaped_name = clean_name.replace('"', '\\"')
+
+        if force:
+            cmd = ["pkill", "-9", "-f", clean_name]
+            subprocess.run(cmd, check=False)
+            return {"status": "success", "message": f"Force closed {clean_name}."}
+
+        # Standard graceful AppleScript quit
+        script = f'tell application "{escaped_name}" to quit'
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                return {"status": "success", "message": f"Closed {clean_name}."}
+            else:
+                # Fallback to pkill if AppleScript couldn't match exact bundle name
+                res_kill = subprocess.run(["pkill", "-f", clean_name], check=False)
+                if res_kill.returncode == 0:
+                    return {"status": "success", "message": f"Closed {clean_name}."}
+                return {"status": "error", "message": f"Could not close '{clean_name}': {res.stderr.strip()}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+class SwitchAppTool(BaseTool):
+    name = "switch_app"
+    description = "Switches to an open application, bringing its window to the front."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "app_name": {
+                "type": "string",
+                "description": "Name of the application to bring to the front (e.g. 'Notes', 'Safari', 'Visual Studio Code')."
+            }
+        },
+        "required": ["app_name"]
+    }
+
+    def execute(self, app_name: str) -> Dict[str, Any]:
+        clean_name = app_name.strip()
+        escaped_name = clean_name.replace('"', '\\"')
+        script = f'tell application "{escaped_name}" to activate'
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                return {"status": "success", "message": f"Switched to {clean_name}."}
+            return {"status": "error", "message": res.stderr.strip()}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+class ListRunningAppsTool(BaseTool):
+    name = "list_running_apps"
+    description = "Lists all currently running, visible applications on macOS."
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+
+    def execute(self) -> Dict[str, Any]:
+        script = 'tell application "System Events" to get name of every process whose visible is true'
+        try:
+            res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                apps = [a.strip() for a in res.stdout.strip().split(",") if a.strip()]
+                return {
+                    "status": "success",
+                    "count": len(apps),
+                    "running_apps": apps,
+                    "message": f"Currently open applications: {', '.join(apps)}"
+                }
+            return {"status": "error", "message": res.stderr.strip()}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
 class MacNotificationTool(BaseTool):
     name = "mac_notification"
     description = "Displays a native macOS banner notification."

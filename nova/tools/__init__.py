@@ -8,6 +8,9 @@ from nova.tools.file_tools import (
 )
 from nova.tools.mac_tools import (
     OpenAppTool,
+    CloseAppTool,
+    SwitchAppTool,
+    ListRunningAppsTool,
     MacNotificationTool,
     SetVolumeTool,
     GetSystemStatusTool,
@@ -33,6 +36,9 @@ def create_default_registry() -> ToolRegistry:
 
     # Mac system & browser tools
     registry.register(OpenAppTool())
+    registry.register(CloseAppTool())
+    registry.register(SwitchAppTool())
+    registry.register(ListRunningAppsTool())
     registry.register(MacNotificationTool())
     registry.register(SetVolumeTool())
     registry.register(GetSystemStatusTool())
@@ -61,6 +67,9 @@ __all__ = [
     "OrganizeFolderTool",
     "ListDirectoryTool",
     "OpenAppTool",
+    "CloseAppTool",
+    "SwitchAppTool",
+    "ListRunningAppsTool",
     "MacNotificationTool",
     "SetVolumeTool",
     "GetSystemStatusTool",
