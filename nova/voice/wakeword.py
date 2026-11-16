@@ -1,71 +1,135 @@
 import logging
-from typing import Optional, Callable, Any
+import re
+import subprocess
+import threading
+import time
+from typing import Optional, Callable, List
+import numpy as np
 
 logger = logging.getLogger("nova.voice.wakeword")
 
-class WakeWordDetector:
-    """Detects 'Hey Nova' wake word or manages push-to-talk activation."""
+WAKE_WORDS = ["hey nova", "nova", "hi nova", "hello nova", "okay nova", "ok nova"]
 
-    def __init__(self, model_name: str = "hey_nova"):
-        self.model_name = model_name
-        self._model = None
+def play_chime(sound_name: str = "Ping"):
+    """Plays a native macOS alert chime asynchronously."""
+    sound_path = f"/System/Library/Sounds/{sound_name}.aiff"
+    try:
+        subprocess.Popen(["afplay", sound_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
-    def is_openwakeword_available(self) -> bool:
-        """Checks if openWakeWord is installed."""
-        try:
-            import openwakeword
-            return True
-        except ImportError:
-            return False
+class ContinuousWakeWordListener:
+    """
+    Always-on hands-free Wake Word engine.
+    Listens on the microphone, detects 'Hey Nova', and triggers autonomous actions.
+    """
 
-    def wait_for_push_to_talk(self) -> bool:
-        """Simple, ultra-reliable push-to-talk fallback."""
-        try:
-            input("\n[Press ENTER to talk to Nova, or type Ctrl+C to quit]...")
-            return True
-        except (KeyboardInterrupt, EOFError):
-            return False
+    def __init__(self, stt_engine, wake_words: Optional[List[str]] = None, energy_threshold: int = 400):
+        self.stt = stt_engine
+        self.wake_words = [w.lower() for w in (wake_words or WAKE_WORDS)]
+        self.energy_threshold = energy_threshold
+        self.sample_rate = 16000
+        self.chunk_size = 1600  # 100ms chunks at 16kHz
+        self._running = False
 
-    def listen_for_wakeword(self, callback: Callable[[], None], stop_event: Optional[Any] = None):
+    def extract_command(self, text: str) -> tuple[bool, str]:
         """
-        Listens continuously on microphone for wake word.
-        When detected, calls the callback function.
+        Checks if text contains a wake word.
+        Returns (is_wake_word_detected, remaining_command).
         """
-        if not self.is_openwakeword_available():
-            logger.info("openWakeWord is not installed. Using push-to-talk mode instead.")
-            while True:
-                if stop_event and stop_event.is_set():
-                    break
-                if self.wait_for_push_to_talk():
-                    callback()
-                else:
-                    break
-            return
+        clean = text.strip()
+        lower = clean.lower()
 
-        # If openwakeword is available
+        for ww in sorted(self.wake_words, key=len, reverse=True):
+            # Check if text starts with or contains the wake word
+            pattern = r'\b' + re.escape(ww) + r'\b[,.?!]?'
+            match = re.search(pattern, lower)
+            if match:
+                # Extract text after wake word
+                end_pos = match.end()
+                remainder = clean[end_pos:].strip()
+                # Remove leading commas or colons
+                remainder = re.sub(r'^[,\s:;.-]+', '', remainder).strip()
+                return True, remainder
+
+        return False, ""
+
+    def listen_loop(self, on_command_callback: Callable[[str], None], status_callback: Optional[Callable[[str], None]] = None):
+        """
+        Continuous listening loop.
+        Monitors microphone for speech, detects 'Hey Nova', and forwards commands.
+        """
+        import sounddevice as sd
+
+        self._running = True
+        silence_limit_chunks = 8  # ~800ms of silence ends speech
+        max_chunks = 100  # max ~10s of speech per command
+
+        if status_callback:
+            status_callback("Listening for 'Hey Nova'...")
+
         try:
-            import openwakeword
-            from openwakeword.model import Model
-            import sounddevice as sd
-            import numpy as np
+            with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16', blocksize=self.chunk_size) as stream:
+                while self._running:
+                    # Read 100ms
+                    data, _ = stream.read(self.chunk_size)
+                    audio_chunk = data[:, 0]
+                    rms = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
 
-            # Load model (can use default openwakeword models or custom hey_nova)
-            oww_model = Model()
-            chunk_size = 1280  # 80ms at 16kHz
+                    # Speech started?
+                    if rms > self.energy_threshold:
+                        if status_callback:
+                            status_callback("Speech detected... listening...")
 
-            def audio_callback(indata, frames, time_info, status):
-                audio = (indata[:, 0] * 32767).astype(np.int16)
-                prediction = oww_model.predict(audio)
-                for mdl, score in prediction.items():
-                    if score > 0.5:
-                        logger.info(f"Wake word detected: {mdl} ({score:.2f})")
-                        callback()
+                        recorded_frames = [audio_chunk]
+                        silent_chunks = 0
 
-            with sd.InputStream(channels=1, samplerate=16000, blocksize=chunk_size, callback=audio_callback):
-                while not (stop_event and stop_event.is_set()):
-                    sd.sleep(100)
+                        # Collect speech until trailing silence
+                        while self._running and silent_chunks < silence_limit_chunks and len(recorded_frames) < max_chunks:
+                            chunk_data, _ = stream.read(self.chunk_size)
+                            chunk = chunk_data[:, 0]
+                            chunk_rms = np.sqrt(np.mean(chunk.astype(np.float32)**2))
+                            recorded_frames.append(chunk)
+
+                            if chunk_rms < self.energy_threshold:
+                                silent_chunks += 1
+                            else:
+                                silent_chunks = 0
+
+                        # Combine audio
+                        full_audio = np.concatenate(recorded_frames)
+
+                        # Must be at least 0.8 seconds of audio
+                        if len(full_audio) < self.sample_rate * 0.8:
+                            continue
+
+                        # Transcribe in-memory with Whisper
+                        text = self.stt.transcribe_audio_array(full_audio)
+                        if not text:
+                            continue
+
+                        is_wake, command = self.extract_command(text)
+                        if is_wake:
+                            play_chime("Ping")
+                            logger.info(f"Wake word detected! Command: '{command}' (Raw: '{text}')")
+
+                            if command:
+                                on_command_callback(command)
+                            else:
+                                # User just said "Hey Nova" without a command yet
+                                if status_callback:
+                                    status_callback("Wake word heard! Listening for command...")
+                                # Listen for follow-up command
+                                follow_up = self.stt.listen_and_transcribe(duration=5)
+                                if follow_up:
+                                    on_command_callback(follow_up)
+
+                            if status_callback:
+                                status_callback("Listening for 'Hey Nova'...")
+
         except Exception as e:
-            logger.error(f"Error in wake word listener: {e}")
-            # Fall back to push-to-talk
-            self.wait_for_push_to_talk()
-            callback()
+            logger.error(f"Error in continuous wake word listener: {e}")
+            raise e
+
+    def stop(self):
+        self._running = False

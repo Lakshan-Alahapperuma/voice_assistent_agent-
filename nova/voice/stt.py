@@ -30,6 +30,17 @@ class WhisperSTT:
                 logger.error(f"Failed to load WhisperModel: {e}")
                 raise e
 
+    def transcribe_audio_array(self, audio_data) -> str:
+        """Transcribes raw in-memory numpy audio array directly (int16 or float32)."""
+        import numpy as np
+        self._load_model()
+        if audio_data.dtype == np.int16:
+            audio_float = audio_data.astype(np.float32) / 32768.0
+        else:
+            audio_float = audio_data.astype(np.float32)
+        segments, _ = self._model.transcribe(audio_float, beam_size=3, vad_filter=True)
+        return " ".join([segment.text for segment in segments]).strip()
+
     def transcribe_audio_file(self, audio_path: str) -> str:
         """Transcribes an audio file into text."""
         self._load_model()

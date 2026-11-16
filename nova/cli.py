@@ -67,7 +67,8 @@ def run_cli():
     parser = argparse.ArgumentParser(description="Nova - Personal AI Assistant for macOS")
     parser.add_argument("--model", type=str, default=MODEL_NAME, help="Ollama model to use")
     parser.add_argument("--voice", action="store_true", help="Enable spoken voice output via macOS say")
-    parser.add_argument("--talk", action="store_true", help="Launch in hands-free voice conversation mode (mic + speaker)")
+    parser.add_argument("--talk", action="store_true", help="Launch in push-to-talk voice conversation mode")
+    parser.add_argument("--wake", action="store_true", help="Launch in always-on 'Hey Nova' wake word detection mode")
     parser.add_argument("--check-system", action="store_true", help="Run system diagnostics")
     parser.add_argument("--auto-confirm", action="store_true", help="Auto-confirm safe actions without prompt")
     args = parser.parse_args()
@@ -78,29 +79,66 @@ def run_cli():
 
     display_banner()
 
-    enable_voice = args.voice or args.talk
+    enable_voice = args.voice or args.talk or args.wake
     agent = NovaAgent(
         model_name=args.model,
         enable_voice=enable_voice,
         auto_confirm=args.auto_confirm
     )
 
-    console.print(Panel(
-        f"[bold green]Nova is active![/bold green]\n"
-        f"• Model: [cyan]{args.model}[/cyan]\n"
-        f"• Voice output (Speaker): [cyan]{'Enabled (say)' if enable_voice else 'Disabled (add --voice to enable)'}[/cyan]\n"
-        f"• Voice input (Microphone): [cyan]{'Ready (Type /mic to talk, or run with --talk)' if agent.stt.is_available() else 'Not available'}[/cyan]\n"
-        f"• Type [bold yellow]'exit'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to exit.\n"
-        f"• Type [bold yellow]'/mic'[/bold yellow] to speak into your microphone.\n"
-        f"• Type [bold yellow]'/tools'[/bold yellow] to list available agent actions.",
-        title="Session Info",
-        border_style="cyan"
-    ))
-
     # Initial check if Ollama is running
     if not agent.brain.is_connected():
         console.print("[bold red]⚠️  Notice:[/bold red] Ollama daemon is not detected at [cyan]http://127.0.0.1:11434[/cyan].")
         console.print("   Please start it in another Terminal with: [bold green]ollama serve[/bold green]\n")
+
+    # Mode 1: Always-on Wake Word detection ("Hey Nova")
+    if args.wake:
+        console.print(Panel(
+            "[bold green]🟢 Always-On Wake Word Mode Active![/bold green]\n\n"
+            "• Say [bold cyan]'Hey Nova'[/bold cyan] followed by your command at any time.\n"
+            "• Example: [italic]'Hey Nova, open Safari and check my battery.'[/italic]\n"
+            "• Nova will chime ([dim]Ping[/dim]), run the task, and speak back to you.\n"
+            "• Press [bold yellow]Ctrl+C[/bold yellow] at any time to stop.",
+            title="Hands-Free Wake Word",
+            border_style="green"
+        ))
+
+        agent.tts.speak("Nova is listening. Say Hey Nova whenever you need me.", async_mode=True)
+
+        from nova.voice.wakeword import ContinuousWakeWordListener
+        listener = ContinuousWakeWordListener(stt_engine=agent.stt)
+
+        def handle_wake_command(command: str):
+            console.print(f"\n[bold green]You (voice)[/bold green] > [cyan]{command}[/cyan]")
+            with console.status("[bold cyan]Nova is executing...[/bold cyan]"):
+                reply = agent.run_turn(command)
+            console.print(f"\n[bold cyan]Nova[/bold cyan]:")
+            console.print(Markdown(reply))
+            console.print()
+
+        try:
+            listener.listen_loop(
+                on_command_callback=handle_wake_command,
+                status_callback=lambda s: console.print(f"[dim]{s}[/dim]", end="\r")
+            )
+        except KeyboardInterrupt:
+            console.print("\n[bold cyan]Nova:[/bold cyan] Wake word detection stopped. Goodbye!")
+            agent.tts.speak("Goodbye!")
+        return
+
+    # Mode 2 & 3: Interactive CLI with text, /mic, and push-to-talk
+    console.print(Panel(
+        f"[bold green]Nova is active![/bold green]\n"
+        f"• Model: [cyan]{args.model}[/cyan]\n"
+        f"• Voice output (Speaker): [cyan]{'Enabled (say)' if enable_voice else 'Disabled (add --voice to enable)'}[/cyan]\n"
+        f"• Voice input (Microphone): [cyan]{'Ready (Type /mic to talk, /wake for Hey Nova, or run with --wake)' if agent.stt.is_available() else 'Not available'}[/cyan]\n"
+        f"• Type [bold yellow]'exit'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to exit.\n"
+        f"• Type [bold yellow]'/mic'[/bold yellow] to speak into your microphone.\n"
+        f"• Type [bold yellow]'/wake'[/bold yellow] to switch to 'Hey Nova' wake word listening.\n"
+        f"• Type [bold yellow]'/tools'[/bold yellow] to list available agent actions.",
+        title="Session Info",
+        border_style="cyan"
+    ))
 
     if args.talk:
         agent.tts.speak("Hello Lakshana, I'm Nova. I'm ready to listen.", async_mode=True)
@@ -142,6 +180,34 @@ def run_cli():
 
                 console.print(f"[bold green]You (voice)[/bold green] > [italic cyan]{transcription}[/italic cyan]")
                 user_input = transcription
+
+            if user_input.lower() in ("/wake", "wake mode", "wake up", "hey nova"):
+                console.print(Panel(
+                    "[bold green]🟢 Switched to Always-On Wake Word Mode![/bold green]\n\n"
+                    "• Say [bold cyan]'Hey Nova'[/bold cyan] followed by your command at any time.\n"
+                    "• Example: [italic]'Hey Nova, open Safari and check my battery.'[/italic]\n"
+                    "• Press [bold yellow]Ctrl+C[/bold yellow] to return to text prompt.",
+                    title="Wake Word Active",
+                    border_style="green"
+                ))
+                agent.enable_voice = True
+                agent.tts.speak("Listening for Hey Nova.", async_mode=True)
+                from nova.voice.wakeword import ContinuousWakeWordListener
+                listener = ContinuousWakeWordListener(stt_engine=agent.stt)
+
+                def handle_wake_cmd(cmd: str):
+                    console.print(f"\n[bold green]You (voice)[/bold green] > [cyan]{cmd}[/cyan]")
+                    with console.status("[bold cyan]Nova is executing...[/bold cyan]"):
+                        reply = agent.run_turn(cmd)
+                    console.print(f"\n[bold cyan]Nova[/bold cyan]:")
+                    console.print(Markdown(reply))
+                    console.print()
+
+                try:
+                    listener.listen_loop(on_command_callback=handle_wake_cmd)
+                except KeyboardInterrupt:
+                    console.print("\n[yellow]Returned to interactive prompt.[/yellow]\n")
+                continue
 
             if user_input.lower() == "/tools":
                 tools_table = Table(title="Nova Registered Tools")
