@@ -10,7 +10,7 @@ from nova.tools import create_default_registry, ToolRegistry
 from nova.safety.guardrails import SafetyGuardrail
 from nova.voice.tts import MacTTS
 from nova.voice.stt import WhisperSTT
-from nova.voice.wakeword import WakeWordDetector
+from nova.voice.wakeword import ContinuousWakeWordListener
 
 logger = logging.getLogger("nova.agent")
 
@@ -31,7 +31,7 @@ class NovaAgent:
         self.safety = SafetyGuardrail(auto_confirm=auto_confirm)
         self.tts = MacTTS()
         self.stt = WhisperSTT()
-        self.wakeword = WakeWordDetector()
+        self.wakeword = ContinuousWakeWordListener(stt_engine=self.stt)
         self.enable_voice = enable_voice
 
     def run_turn(self, user_text: str) -> str:

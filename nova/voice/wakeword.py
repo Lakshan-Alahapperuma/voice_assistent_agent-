@@ -3,7 +3,7 @@ import re
 import subprocess
 import threading
 import time
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Any
 import numpy as np
 
 logger = logging.getLogger("nova.voice.wakeword")
@@ -24,8 +24,12 @@ class ContinuousWakeWordListener:
     Listens on the microphone, detects 'Hey Nova', and triggers autonomous actions.
     """
 
-    def __init__(self, stt_engine, wake_words: Optional[List[str]] = None, energy_threshold: int = 400):
-        self.stt = stt_engine
+    def __init__(self, stt_engine: Optional[Any] = None, wake_words: Optional[List[str]] = None, energy_threshold: int = 400):
+        if stt_engine is None:
+            from nova.voice.stt import WhisperSTT
+            self.stt = WhisperSTT()
+        else:
+            self.stt = stt_engine
         self.wake_words = [w.lower() for w in (wake_words or WAKE_WORDS)]
         self.energy_threshold = energy_threshold
         self.sample_rate = 16000
@@ -133,3 +137,6 @@ class ContinuousWakeWordListener:
 
     def stop(self):
         self._running = False
+
+# Backward compatibility alias
+WakeWordDetector = ContinuousWakeWordListener
