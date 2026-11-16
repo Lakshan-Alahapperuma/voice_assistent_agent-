@@ -58,6 +58,19 @@ class MacTTS:
         else:
             _run()
 
+    def is_speaking(self) -> bool:
+        """Returns True if TTS is currently playing audio."""
+        return self._current_process is not None and self._current_process.poll() is None
+
+    def wait_until_done(self, timeout: float = 30.0):
+        """Blocks until current speech finishes playing."""
+        p = self._current_process
+        if p and p.poll() is None:
+            try:
+                p.wait(timeout=timeout)
+            except Exception:
+                pass
+
     def stop(self):
         """Stops any currently playing speech."""
         if self._current_process and self._current_process.poll() is None:

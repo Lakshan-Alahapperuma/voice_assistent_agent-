@@ -20,16 +20,29 @@ def play_chime(sound_name: str = "Ping"):
 
 class ContinuousWakeWordListener:
     """
-    Always-on hands-free Wake Word engine.
+    Always-on hands-free Wake Word engine with stream pause/resume.
     Listens on the microphone, detects 'Hey Nova', and triggers autonomous actions.
     """
 
-    def __init__(self, stt_engine: Optional[Any] = None, wake_words: Optional[List[str]] = None, energy_threshold: int = 400):
+    def __init__(
+        self,
+        stt_engine: Optional[Any] = None,
+        tts_engine: Optional[Any] = None,
+        wake_words: Optional[List[str]] = None,
+        energy_threshold: int = 400
+    ):
         if stt_engine is None:
             from nova.voice.stt import WhisperSTT
             self.stt = WhisperSTT()
         else:
             self.stt = stt_engine
+
+        if tts_engine is None:
+            from nova.voice.tts import MacTTS
+            self.tts = MacTTS()
+        else:
+            self.tts = tts_engine
+
         self.wake_words = [w.lower() for w in (wake_words or WAKE_WORDS)]
         self.energy_threshold = energy_threshold
         self.sample_rate = 16000
@@ -45,42 +58,60 @@ class ContinuousWakeWordListener:
         lower = clean.lower()
 
         for ww in sorted(self.wake_words, key=len, reverse=True):
-            # Check if text starts with or contains the wake word
+            # Check pattern with optional punctuation
             pattern = r'\b' + re.escape(ww) + r'\b[,.?!]?'
             match = re.search(pattern, lower)
             if match:
-                # Extract text after wake word
                 end_pos = match.end()
                 remainder = clean[end_pos:].strip()
-                # Remove leading commas or colons
                 remainder = re.sub(r'^[,\s:;.-]+', '', remainder).strip()
                 return True, remainder
 
         return False, ""
 
-    def listen_loop(self, on_command_callback: Callable[[str], None], status_callback: Optional[Callable[[str], None]] = None):
+    def listen_loop(
+        self,
+        on_command_callback: Callable[[str], None],
+        status_callback: Optional[Callable[[str], None]] = None
+    ):
         """
         Continuous listening loop.
-        Monitors microphone for speech, detects 'Hey Nova', and forwards commands.
+        Monitors microphone for speech, detects 'Hey Nova', pauses during execution/TTS,
+        and cleanly resumes listening.
         """
         import sounddevice as sd
 
         self._running = True
-        silence_limit_chunks = 8  # ~800ms of silence ends speech
-        max_chunks = 100  # max ~10s of speech per command
-
-        if status_callback:
-            status_callback("Listening for 'Hey Nova'...")
+        silence_limit_chunks = 7  # ~700ms of trailing silence ends speech
+        max_chunks = 90           # max ~9s of speech per command
 
         try:
-            with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16', blocksize=self.chunk_size) as stream:
+            with sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype='int16',
+                blocksize=self.chunk_size
+            ) as stream:
+
+                # Calibrate ambient noise floor for 400ms
+                ambient_vals = []
+                for _ in range(4):
+                    d, _ = stream.read(self.chunk_size)
+                    ambient_vals.append(np.sqrt(np.mean(d[:, 0].astype(np.float32)**2)))
+                noise_floor = np.mean(ambient_vals)
+                self.energy_threshold = max(350, int(noise_floor * 2.2))
+                logger.info(f"Calibrated noise floor: {noise_floor:.1f}, speech threshold: {self.energy_threshold}")
+
+                if status_callback:
+                    status_callback("Ready! Listening for 'Hey Nova'...")
+
                 while self._running:
                     # Read 100ms
                     data, _ = stream.read(self.chunk_size)
                     audio_chunk = data[:, 0]
                     rms = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
 
-                    # Speech started?
+                    # Speech started
                     if rms > self.energy_threshold:
                         if status_callback:
                             status_callback("Speech detected... listening...")
@@ -100,34 +131,56 @@ class ContinuousWakeWordListener:
                             else:
                                 silent_chunks = 0
 
-                        # Combine audio
                         full_audio = np.concatenate(recorded_frames)
 
-                        # Must be at least 0.8 seconds of audio
-                        if len(full_audio) < self.sample_rate * 0.8:
+                        # Audio must be at least ~0.7 seconds
+                        if len(full_audio) < self.sample_rate * 0.7:
+                            if status_callback:
+                                status_callback("Listening for 'Hey Nova'...")
                             continue
 
                         # Transcribe in-memory with Whisper
                         text = self.stt.transcribe_audio_array(full_audio)
                         if not text:
+                            if status_callback:
+                                status_callback("Listening for 'Hey Nova'...")
                             continue
 
                         is_wake, command = self.extract_command(text)
                         if is_wake:
-                            play_chime("Ping")
-                            logger.info(f"Wake word detected! Command: '{command}' (Raw: '{text}')")
+                            # 1. Stop audio stream immediately to prevent feedback & buffer overflow
+                            stream.stop()
 
+                            # 2. Play alert chime
+                            play_chime("Ping")
+                            logger.info(f"Wake word detected! Command: '{command}'")
+
+                            # 3. Handle command or prompt for one
                             if command:
                                 on_command_callback(command)
                             else:
-                                # User just said "Hey Nova" without a command yet
                                 if status_callback:
                                     status_callback("Wake word heard! Listening for command...")
-                                # Listen for follow-up command
+                                # Speak brief prompt and listen
+                                self.tts.speak("Yes? How can I help?", async_mode=False)
                                 follow_up = self.stt.listen_and_transcribe(duration=5)
                                 if follow_up:
                                     on_command_callback(follow_up)
 
+                            # 4. Wait for any speech output to finish completely
+                            if self.tts:
+                                self.tts.wait_until_done()
+
+                            # 5. Brief cool-down for room echo to settle
+                            time.sleep(0.4)
+
+                            # 6. Resume stream fresh
+                            if self._running:
+                                stream.start()
+                                if status_callback:
+                                    status_callback("Ready! Listening for 'Hey Nova'...")
+
+                        else:
                             if status_callback:
                                 status_callback("Listening for 'Hey Nova'...")
 

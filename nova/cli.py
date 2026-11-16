@@ -106,7 +106,7 @@ def run_cli():
         agent.tts.speak("Nova is listening. Say Hey Nova whenever you need me.", async_mode=True)
 
         from nova.voice.wakeword import ContinuousWakeWordListener
-        listener = ContinuousWakeWordListener(stt_engine=agent.stt)
+        listener = ContinuousWakeWordListener(stt_engine=agent.stt, tts_engine=agent.tts)
 
         def handle_wake_command(command: str):
             console.print(f"\n[bold green]You (voice)[/bold green] > [cyan]{command}[/cyan]")
@@ -115,6 +115,8 @@ def run_cli():
             console.print(f"\n[bold cyan]Nova[/bold cyan]:")
             console.print(Markdown(reply))
             console.print()
+            # Wait for spoken speech to finish before resuming mic
+            agent.tts.wait_until_done()
 
         try:
             listener.listen_loop(
@@ -193,7 +195,7 @@ def run_cli():
                 agent.enable_voice = True
                 agent.tts.speak("Listening for Hey Nova.", async_mode=True)
                 from nova.voice.wakeword import ContinuousWakeWordListener
-                listener = ContinuousWakeWordListener(stt_engine=agent.stt)
+                listener = ContinuousWakeWordListener(stt_engine=agent.stt, tts_engine=agent.tts)
 
                 def handle_wake_cmd(cmd: str):
                     console.print(f"\n[bold green]You (voice)[/bold green] > [cyan]{cmd}[/cyan]")
@@ -202,6 +204,7 @@ def run_cli():
                     console.print(f"\n[bold cyan]Nova[/bold cyan]:")
                     console.print(Markdown(reply))
                     console.print()
+                    agent.tts.wait_until_done()
 
                 try:
                     listener.listen_loop(on_command_callback=handle_wake_cmd)
