@@ -63,18 +63,77 @@ def check_system_diagnostics():
 
     console.print(table)
 
+def test_microphone_diagnostics():
+    import sounddevice as sd
+    import numpy as np
+    import time
+    from nova.voice.stt import WhisperSTT, enhance_and_normalize_audio
+
+    console.print("[bold cyan]🎙️  Testing Microphone & Audio Levels...[/bold cyan]\n")
+    devices = sd.query_devices()
+    default_input = sd.default.device[0]
+    dev_name = devices[default_input]['name'] if default_input is not None and default_input >= 0 else "Default Mic"
+    console.print(f"• Active Input Device: [bold green]{dev_name}[/bold green]")
+    console.print("• Recording 3 seconds of audio... [bold red]Speak now (e.g. 'Hey Nova testing 1 2 3')[/bold red]:\n")
+
+    time.sleep(0.5)
+    sample_rate = 16000
+    with console.status("[bold red]Recording 3 seconds from microphone... Speak now![/bold red]"):
+        audio_data = sd.rec(int(3.0 * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
+        sd.wait()
+
+    console.print("  [green]Done recording![/green]\n")
+
+    audio_flat = audio_data[:, 0]
+    raw_peak = int(np.max(np.abs(audio_flat)))
+    raw_rms = int(np.sqrt(np.mean(audio_flat.astype(np.float32)**2)))
+
+    # Enhanced audio
+    audio_boosted = enhance_and_normalize_audio(audio_flat)
+    boosted_peak = float(np.max(np.abs(audio_boosted)))
+
+    # Whisper transcription
+    stt = WhisperSTT()
+    with console.status("[bold cyan]Transcribing with enhanced Whisper model...[/bold cyan]"):
+        text = stt.transcribe_audio_array(audio_flat)
+
+    percent = min(100, int((raw_peak / 3000.0) * 100))
+    bar = "█" * (percent // 5) + "░" * (20 - (percent // 5))
+
+    table = Table(title="Microphone Diagnostic Results", border_style="cyan")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", style="green")
+    table.add_column("Evaluation")
+
+    table.add_row("Microphone Device", dev_name, "[green]Online[/green]")
+    table.add_row("Raw Peak Amplitude", f"{raw_peak} / 32768", f"[{bar}] {percent}%")
+    table.add_row("Raw RMS Level", f"{raw_rms}", "Normal speech is 150–1200")
+    table.add_row("Normalized Signal Peak", f"{boosted_peak:.2f} / 1.0", "[green]Studio Reference Level[/green]")
+    table.add_row("Whisper Transcribed Text", f"\"{text}\"", "[bold green]Captured Successfully[/bold green]" if text else "[yellow]No speech detected[/yellow]")
+
+    console.print(table)
+    if text:
+        console.print(f"\n[bold green]✅ Success![/bold green] Nova clearly heard: [italic cyan]\"{text}\"[/italic cyan]\n")
+    else:
+        console.print("\n[bold yellow]⚠️  Notice:[/bold yellow] No speech was detected. Make sure to speak close to the microphone and that Terminal has microphone access in System Settings > Privacy & Security > Microphone.\n")
+
 def run_cli():
     parser = argparse.ArgumentParser(description="Nova - Personal AI Assistant for macOS")
     parser.add_argument("--model", type=str, default=MODEL_NAME, help="Ollama model to use")
     parser.add_argument("--voice", action="store_true", help="Enable spoken voice output via macOS say")
     parser.add_argument("--talk", action="store_true", help="Launch in push-to-talk voice conversation mode")
     parser.add_argument("--wake", action="store_true", help="Launch in always-on 'Hey Nova' wake word detection mode")
+    parser.add_argument("--test-mic", action="store_true", help="Test microphone audio input levels and Whisper accuracy")
     parser.add_argument("--check-system", action="store_true", help="Run system diagnostics")
     parser.add_argument("--auto-confirm", action="store_true", help="Auto-confirm safe actions without prompt")
     args = parser.parse_args()
 
     if args.check_system:
         check_system_diagnostics()
+        return
+
+    if args.test_mic:
+        test_microphone_diagnostics()
         return
 
     display_banner()

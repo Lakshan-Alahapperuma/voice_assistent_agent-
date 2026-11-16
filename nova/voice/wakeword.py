@@ -10,7 +10,9 @@ logger = logging.getLogger("nova.voice.wakeword")
 
 WAKE_WORDS = [
     "hey nova", "nova", "hi nova", "hello nova", "okay nova", "ok nova",
-    "hey no va", "no va", "hi no va", "hey noba", "noba"
+    "hey noba", "noba", "hey no va", "no va", "hey neva", "neva",
+    "hey novo", "novo", "hey knowa", "knowa", "hey noah", "noah",
+    "hey rover", "anova", "a nova"
 ]
 
 def play_chime(sound_name: str = "Ping"):
@@ -23,8 +25,7 @@ def play_chime(sound_name: str = "Ping"):
 
 class ContinuousWakeWordListener:
     """
-    Always-on hands-free Wake Word engine with stream pause/resume.
-    Listens on the microphone, detects 'Hey Nova', and triggers autonomous actions.
+    Always-on hands-free Wake Word engine with stream pause/resume and auto-gain audio processing.
     """
 
     def __init__(
@@ -32,7 +33,7 @@ class ContinuousWakeWordListener:
         stt_engine: Optional[Any] = None,
         tts_engine: Optional[Any] = None,
         wake_words: Optional[List[str]] = None,
-        energy_threshold: int = 250
+        energy_threshold: int = 150
     ):
         if stt_engine is None:
             from nova.voice.stt import WhisperSTT
@@ -54,7 +55,7 @@ class ContinuousWakeWordListener:
 
     def extract_command(self, text: str) -> tuple[bool, str]:
         """
-        Checks if text contains a wake word.
+        Checks if text contains a wake word or phonetic variation.
         Returns (is_wake_word_detected, remaining_command).
         """
         clean = text.strip()
@@ -77,9 +78,7 @@ class ContinuousWakeWordListener:
         status_callback: Optional[Callable[[str], None]] = None
     ):
         """
-        Continuous listening loop.
-        Monitors microphone for speech, detects 'Hey Nova', pauses during execution/TTS,
-        and cleanly resumes listening.
+        Continuous listening loop with enhanced sensitivity.
         """
         import sounddevice as sd
 
@@ -106,12 +105,13 @@ class ContinuousWakeWordListener:
                     d, _ = stream.read(self.chunk_size)
                     ambient_vals.append(np.sqrt(np.mean(d[:, 0].astype(np.float32)**2)))
                 noise_floor = np.mean(ambient_vals)
-                # Keep threshold strictly bounded between 200 and 450 so it never misses speech
-                self.energy_threshold = max(200, min(450, int(noise_floor * 1.6)))
+
+                # Sensitive speech threshold: between 100 and 260 RMS (easily catches normal speech)
+                self.energy_threshold = max(100, min(260, int(noise_floor * 1.3)))
                 logger.info(f"Calibrated noise floor: {noise_floor:.1f}, speech threshold: {self.energy_threshold}")
 
                 if status_callback:
-                    status_callback(f"Listening for 'Hey Nova'... (Threshold: {self.energy_threshold})")
+                    status_callback(f"Listening for 'Hey Nova'... (Mic sensitivity: High)")
 
                 while self._running:
                     # Read 100ms
@@ -122,7 +122,7 @@ class ContinuousWakeWordListener:
                     # Speech started
                     if rms > self.energy_threshold:
                         if status_callback:
-                            status_callback("Hearing voice... listening...")
+                            status_callback("🎙️ Hearing speech... listening...")
 
                         recorded_frames = [audio_chunk]
                         silent_chunks = 0
@@ -141,13 +141,13 @@ class ContinuousWakeWordListener:
 
                         full_audio = np.concatenate(recorded_frames)
 
-                        # Audio must be at least ~0.5 seconds
-                        if len(full_audio) < self.sample_rate * 0.5:
+                        # Audio must be at least ~0.4 seconds
+                        if len(full_audio) < self.sample_rate * 0.4:
                             if status_callback:
                                 status_callback("Listening for 'Hey Nova'...")
                             continue
 
-                        # Transcribe in-memory with Whisper
+                        # Transcribe in-memory with auto-gain boosted Whisper
                         text = self.stt.transcribe_audio_array(full_audio)
                         if not text:
                             if status_callback:
@@ -189,7 +189,7 @@ class ContinuousWakeWordListener:
                                     status_callback("Listening for 'Hey Nova'...")
 
                         else:
-                            # Heard something else, print feedback
+                            # Print what Whisper heard to help user see microphone activity
                             if status_callback:
                                 status_callback(f"Heard: '{text[:25]}' (Say 'Hey Nova' to activate)")
 
