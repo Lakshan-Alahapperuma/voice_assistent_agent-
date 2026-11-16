@@ -11,7 +11,11 @@ from nova.tools.mac_tools import (
     MacNotificationTool,
     SetVolumeTool,
     GetSystemStatusTool,
-    RunAppleScriptTool
+    RunAppleScriptTool,
+    OpenUrlTool,
+    SearchWebTool,
+    PlayMusicTool,
+    MediaControlTool
 )
 from nova.tools.email_tools import DraftEmailTool, SendEmailTool
 from nova.tools.shell_tools import RunCommandTool
@@ -27,12 +31,16 @@ def create_default_registry() -> ToolRegistry:
     registry.register(OrganizeFolderTool())
     registry.register(ListDirectoryTool())
 
-    # Mac system tools
+    # Mac system & browser tools
     registry.register(OpenAppTool())
     registry.register(MacNotificationTool())
     registry.register(SetVolumeTool())
     registry.register(GetSystemStatusTool())
     registry.register(RunAppleScriptTool())
+    registry.register(OpenUrlTool())
+    registry.register(SearchWebTool())
+    registry.register(PlayMusicTool())
+    registry.register(MediaControlTool())
 
     # Email tools
     registry.register(DraftEmailTool())
@@ -57,6 +65,10 @@ __all__ = [
     "SetVolumeTool",
     "GetSystemStatusTool",
     "RunAppleScriptTool",
+    "OpenUrlTool",
+    "SearchWebTool",
+    "PlayMusicTool",
+    "MediaControlTool",
     "DraftEmailTool",
     "SendEmailTool",
     "RunCommandTool"
