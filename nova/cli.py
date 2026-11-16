@@ -121,10 +121,15 @@ def run_cli():
                 console.print(tools_table)
                 continue
 
-            if user_input.lower() == "/voice":
-                agent.enable_voice = not agent.enable_voice
-                state = "enabled" if agent.enable_voice else "disabled"
-                console.print(f"[cyan]Voice output is now {state}.[/cyan]")
+            if user_input.lower() in ("/voice", "python main.py --voice", "turn on voice", "enable voice", "voice on"):
+                agent.enable_voice = True
+                console.print("[bold green]🔊 Spoken voice output is now enabled![/bold green] Nova will speak all responses out loud.")
+                agent.tts.speak("Voice output is now enabled. How can I help you?", async_mode=True)
+                continue
+
+            if user_input.lower() in ("turn off voice", "disable voice", "voice off", "mute"):
+                agent.enable_voice = False
+                console.print("[yellow]🔇 Voice output is now disabled.[/yellow]")
                 continue
 
             if user_input.lower() == "/history":
