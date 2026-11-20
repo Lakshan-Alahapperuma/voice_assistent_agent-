@@ -15,6 +15,11 @@ WAKE_WORDS = [
     "hey rover", "anova", "a nova"
 ]
 
+DISMISSAL_PHRASES = [
+    "thank you", "thanks", "that's all", "thats all", "bye", "goodbye",
+    "stop", "exit", "quit", "go to sleep", "sleep", "done", "never mind", "nevermind"
+]
+
 def play_chime(sound_name: str = "Ping"):
     """Plays a native macOS alert chime asynchronously."""
     sound_path = f"/System/Library/Sounds/{sound_name}.aiff"
@@ -25,7 +30,8 @@ def play_chime(sound_name: str = "Ping"):
 
 class ContinuousWakeWordListener:
     """
-    Always-on hands-free Wake Word engine with stream pause/resume and auto-gain audio processing.
+    Always-on hands-free Wake Word engine with Continuous Follow-Up Conversation Mode.
+    Once started with 'Hey Nova', the conversation continues naturally without repeating 'Hey Nova'.
     """
 
     def __init__(
@@ -33,7 +39,8 @@ class ContinuousWakeWordListener:
         stt_engine: Optional[Any] = None,
         tts_engine: Optional[Any] = None,
         wake_words: Optional[List[str]] = None,
-        energy_threshold: int = 150
+        energy_threshold: int = 150,
+        conversation_timeout: float = 8.0
     ):
         if stt_engine is None:
             from nova.voice.stt import WhisperSTT
@@ -52,6 +59,19 @@ class ContinuousWakeWordListener:
         self.sample_rate = 16000
         self.chunk_size = 1600  # 100ms chunks at 16kHz
         self._running = False
+
+        # Continuous Conversation State
+        self.conversation_active = False
+        self.conversation_timeout = conversation_timeout
+        self.last_activity_time = 0.0
+
+    def is_dismissal(self, text: str) -> bool:
+        """Checks if user is saying goodbye or closing the conversation."""
+        clean = re.sub(r'[,.?!;:\-]+', '', text.strip().lower())
+        for phrase in DISMISSAL_PHRASES:
+            if clean == phrase or clean.startswith(phrase + " "):
+                return True
+        return False
 
     def extract_command(self, text: str) -> tuple[bool, str]:
         """
@@ -78,7 +98,7 @@ class ContinuousWakeWordListener:
         status_callback: Optional[Callable[[str], None]] = None
     ):
         """
-        Continuous listening loop with enhanced sensitivity.
+        Continuous listening loop with follow-up conversation mode.
         """
         import sounddevice as sd
 
@@ -106,7 +126,6 @@ class ContinuousWakeWordListener:
                     ambient_vals.append(np.sqrt(np.mean(d[:, 0].astype(np.float32)**2)))
                 noise_floor = np.mean(ambient_vals)
 
-                # Sensitive speech threshold: between 100 and 260 RMS (easily catches normal speech)
                 self.energy_threshold = max(100, min(260, int(noise_floor * 1.3)))
                 logger.info(f"Calibrated noise floor: {noise_floor:.1f}, speech threshold: {self.energy_threshold}")
 
@@ -114,12 +133,21 @@ class ContinuousWakeWordListener:
                     status_callback(f"Listening for 'Hey Nova'... (Mic sensitivity: High)")
 
                 while self._running:
-                    # Read 100ms
+                    # 1. Check conversation timeout
+                    if self.conversation_active:
+                        if time.time() - self.last_activity_time > self.conversation_timeout:
+                            self.conversation_active = False
+                            play_chime("Tink")
+                            logger.info("Follow-up conversation window timed out. Returning to 'Hey Nova' mode.")
+                            if status_callback:
+                                status_callback("Listening for 'Hey Nova'...")
+
+                    # 2. Read 100ms
                     data, _ = stream.read(self.chunk_size)
                     audio_chunk = data[:, 0]
                     rms = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
 
-                    # Speech started
+                    # 3. Speech started
                     if rms > self.energy_threshold:
                         if status_callback:
                             status_callback("🎙️ Hearing speech... listening...")
@@ -144,54 +172,90 @@ class ContinuousWakeWordListener:
                         # Audio must be at least ~0.4 seconds
                         if len(full_audio) < self.sample_rate * 0.4:
                             if status_callback:
-                                status_callback("Listening for 'Hey Nova'...")
+                                status_callback("💬 Listening..." if self.conversation_active else "Listening for 'Hey Nova'...")
                             continue
 
                         # Transcribe in-memory with auto-gain boosted Whisper
                         text = self.stt.transcribe_audio_array(full_audio)
                         if not text:
                             if status_callback:
-                                status_callback("Listening for 'Hey Nova'...")
+                                status_callback("💬 Listening..." if self.conversation_active else "Listening for 'Hey Nova'...")
                             continue
 
-                        is_wake, command = self.extract_command(text)
-                        if is_wake:
-                            # 1. Stop audio stream immediately to prevent feedback & buffer overflow
+                        # --- Branch A: Follow-up conversation already active ---
+                        if self.conversation_active and (time.time() - self.last_activity_time <= self.conversation_timeout):
+                            # Check if user says goodbye or dismisses
+                            if self.is_dismissal(text):
+                                stream.stop()
+                                play_chime("Tink")
+                                self.conversation_active = False
+                                self.tts.speak("You're welcome! Let me know if you need anything else.", async_mode=False)
+                                if self.tts:
+                                    self.tts.wait_until_done()
+                                time.sleep(0.3)
+                                if self._running:
+                                    stream.start()
+                                    if status_callback:
+                                        status_callback("Listening for 'Hey Nova'...")
+                                continue
+
+                            # Check if user included wake word anyway, strip it
+                            is_wake, extracted = self.extract_command(text)
+                            command = extracted if is_wake and extracted else text
+
+                            # Execute follow-up command!
                             stream.stop()
-
-                            # 2. Play alert chime
                             play_chime("Ping")
-                            logger.info(f"Wake word detected! Command: '{command}'")
+                            logger.info(f"Follow-up command executed: '{command}'")
 
-                            # 3. Handle command or prompt for one
-                            if command:
-                                on_command_callback(command)
-                            else:
-                                if status_callback:
-                                    status_callback("Wake word heard! Listening for command...")
-                                # Speak brief prompt and listen
-                                self.tts.speak("Yes? How can I help?", async_mode=False)
-                                follow_up = self.stt.listen_and_transcribe(duration=5)
-                                if follow_up:
-                                    on_command_callback(follow_up)
+                            on_command_callback(command)
 
-                            # 4. Wait for any speech output to finish completely
                             if self.tts:
                                 self.tts.wait_until_done()
-
-                            # 5. Brief cool-down for room echo to settle
                             time.sleep(0.4)
 
-                            # 6. Resume stream fresh
+                            # Refresh conversation window
+                            self.conversation_active = True
+                            self.last_activity_time = time.time()
+
                             if self._running:
                                 stream.start()
                                 if status_callback:
-                                    status_callback("Listening for 'Hey Nova'...")
+                                    status_callback("💬 Conversation active — speak follow-up command...")
 
+                        # --- Branch B: Waiting for initial 'Hey Nova' ---
                         else:
-                            # Print what Whisper heard to help user see microphone activity
-                            if status_callback:
-                                status_callback(f"Heard: '{text[:25]}' (Say 'Hey Nova' to activate)")
+                            is_wake, command = self.extract_command(text)
+                            if is_wake:
+                                stream.stop()
+                                play_chime("Ping")
+                                logger.info(f"Wake word detected! Command: '{command}'")
+
+                                if command:
+                                    on_command_callback(command)
+                                else:
+                                    if status_callback:
+                                        status_callback("Wake word heard! Listening for command...")
+                                    self.tts.speak("Yes? How can I help?", async_mode=False)
+                                    follow_up = self.stt.listen_and_transcribe(duration=5)
+                                    if follow_up:
+                                        on_command_callback(follow_up)
+
+                                if self.tts:
+                                    self.tts.wait_until_done()
+                                time.sleep(0.4)
+
+                                # Open follow-up conversation window
+                                self.conversation_active = True
+                                self.last_activity_time = time.time()
+
+                                if self._running:
+                                    stream.start()
+                                    if status_callback:
+                                        status_callback("💬 Conversation active — speak follow-up command...")
+                            else:
+                                if status_callback:
+                                    status_callback(f"Heard: '{text[:25]}' (Say 'Hey Nova' to activate)")
 
         except Exception as e:
             logger.error(f"Error in continuous wake word listener: {e}")
@@ -199,6 +263,7 @@ class ContinuousWakeWordListener:
 
     def stop(self):
         self._running = False
+        self.conversation_active = False
 
 # Backward compatibility alias
 WakeWordDetector = ContinuousWakeWordListener

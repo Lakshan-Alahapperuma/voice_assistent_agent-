@@ -32,5 +32,27 @@ class TestWakeWord(unittest.TestCase):
         self.assertFalse(detected)
         self.assertEqual(cmd, "")
 
+    def test_is_dismissal(self):
+        self.assertTrue(self.listener.is_dismissal("thank you"))
+        self.assertTrue(self.listener.is_dismissal("Thank you!"))
+        self.assertTrue(self.listener.is_dismissal("thanks"))
+        self.assertTrue(self.listener.is_dismissal("bye"))
+        self.assertTrue(self.listener.is_dismissal("go to sleep"))
+        self.assertTrue(self.listener.is_dismissal("that's all"))
+        self.assertTrue(self.listener.is_dismissal("never mind"))
+        self.assertFalse(self.listener.is_dismissal("open Safari"))
+        self.assertFalse(self.listener.is_dismissal("what is the weather"))
+
+    def test_conversation_state_and_timeout(self):
+        self.assertFalse(self.listener.conversation_active)
+        self.listener.conversation_active = True
+        self.listener.last_activity_time = 100.0
+        self.listener.conversation_timeout = 8.0
+
+        # Within timeout
+        self.assertTrue(105.0 - self.listener.last_activity_time <= self.listener.conversation_timeout)
+        # Exceeded timeout
+        self.assertFalse(110.0 - self.listener.last_activity_time <= self.listener.conversation_timeout)
+
 if __name__ == "__main__":
     unittest.main()

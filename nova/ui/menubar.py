@@ -111,7 +111,20 @@ class NovaMenuBarApp(rumps.App):
                     rumps.notification("Nova Assistant", "Error", str(e))
                 finally:
                     if not self.is_paused:
-                        self.set_title_safe("🎙️ Nova")
+                        if getattr(self.listener, 'conversation_active', False):
+                            self.set_title_safe("💬 Nova")
+                        else:
+                            self.set_title_safe("🎙️ Nova")
+
+            def _status_update(msg: str):
+                if self.is_paused:
+                    return
+                if "💬" in msg:
+                    self.set_title_safe("💬 Nova")
+                    AppHelper.callAfter(lambda: setattr(self.status_item, 'title', "● Status: In Conversation (listening...)"))
+                elif "Listening for 'Hey Nova'" in msg:
+                    self.set_title_safe("🎙️ Nova")
+                    AppHelper.callAfter(lambda: setattr(self.status_item, 'title', "● Status: Listening for 'Hey Nova'"))
 
             while self.is_app_running:
                 if self.is_paused:
@@ -120,7 +133,8 @@ class NovaMenuBarApp(rumps.App):
 
                 try:
                     self.listener.listen_loop(
-                        on_command_callback=_handle_command
+                        on_command_callback=_handle_command,
+                        status_callback=_status_update
                     )
                 except Exception as e:
                     logger.error(f"Listener loop exception: {e}", exc_info=True)

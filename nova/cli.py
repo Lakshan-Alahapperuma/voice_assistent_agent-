@@ -307,7 +307,10 @@ def run_cli():
                     agent.tts.wait_until_done()
 
                 try:
-                    listener.listen_loop(on_command_callback=handle_wake_cmd)
+                    listener.listen_loop(
+                        on_command_callback=handle_wake_cmd,
+                        status_callback=lambda s: console.print(f"[dim]{s}[/dim]", end="\r")
+                    )
                 except KeyboardInterrupt:
                     console.print("\n[yellow]Returned to interactive prompt.[/yellow]\n")
                 continue
