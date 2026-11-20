@@ -1,5 +1,9 @@
 import json
 import logging
+import os
+import shutil
+import subprocess
+import time
 from typing import List, Dict, Any, Optional
 import ollama
 from nova.config import MODEL_NAME, OLLAMA_HOST
@@ -22,6 +26,25 @@ class NovaBrain:
         except Exception as e:
             logger.debug(f"Ollama connection check failed: {e}")
             return False
+
+    def ensure_service_running(self) -> bool:
+        """Checks if Ollama is running. If offline, automatically starts it in the background."""
+        if self.is_connected():
+            return True
+
+        logger.info("Ollama daemon is offline. Attempting auto-start...")
+        ollama_bin = shutil.which("ollama") or "/opt/homebrew/bin/ollama"
+        if os.path.exists(ollama_bin):
+            try:
+                subprocess.Popen([ollama_bin, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                for _ in range(12):  # Wait up to 6 seconds
+                    time.sleep(0.5)
+                    if self.is_connected():
+                        logger.info("Ollama daemon auto-started successfully.")
+                        return True
+            except Exception as e:
+                logger.error(f"Failed to auto-start Ollama: {e}")
+        return False
 
     def list_models(self) -> List[str]:
         """List locally pulled models in Ollama."""
@@ -46,6 +69,9 @@ class NovaBrain:
         - content: str
         - tool_calls: list of dicts [{'name': ..., 'arguments': ...}]
         """
+        if not self.is_connected():
+            self.ensure_service_running()
+
         kwargs = {
             "model": self.model_name,
             "messages": messages,
