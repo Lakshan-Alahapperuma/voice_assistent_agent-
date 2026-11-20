@@ -1,5 +1,6 @@
 import argparse
 import sys
+import subprocess
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -117,12 +118,28 @@ def test_microphone_diagnostics():
     else:
         console.print("\n[bold yellow]⚠️  Notice:[/bold yellow] No speech was detected. Make sure to speak close to the microphone and that Terminal has microphone access in System Settings > Privacy & Security > Microphone.\n")
 
+def build_macos_app():
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parent.parent
+    venv_python = project_root / ".venv" / "bin" / "python3"
+    main_py = project_root / "main.py"
+    app_path = project_root / "Nova.app"
+
+    script = f'do shell script "cd \\"{project_root}\\" && \\"{venv_python}\\" \\"{main_py}\\" --menubar > /dev/null 2>&1 &"'
+    subprocess.run(["osacompile", "-o", str(app_path), "-e", script], check=True)
+    console.print(f"[bold green]✅ Nova.app built successfully at:[/bold green] [cyan]{app_path}[/cyan]\n")
+    console.print("You can now double-click [bold]Nova.app[/bold] anytime to launch it without a Terminal window!")
+
 def run_cli():
     parser = argparse.ArgumentParser(description="Nova - Personal AI Assistant for macOS")
     parser.add_argument("--model", type=str, default=MODEL_NAME, help="Ollama model to use")
     parser.add_argument("--voice", action="store_true", help="Enable spoken voice output via macOS say")
     parser.add_argument("--talk", action="store_true", help="Launch in push-to-talk voice conversation mode")
     parser.add_argument("--wake", action="store_true", help="Launch in always-on 'Hey Nova' wake word detection mode")
+    parser.add_argument("--menubar", action="store_true", help="Launch as a native macOS Menu Bar application")
+    parser.add_argument("--build-app", action="store_true", help="Build a standalone double-clickable Nova.app")
+    parser.add_argument("--install-service", action="store_true", help="Install Nova to run automatically on system login")
+    parser.add_argument("--uninstall-service", action="store_true", help="Uninstall Nova system login service")
     parser.add_argument("--test-mic", action="store_true", help="Test microphone audio input levels and Whisper accuracy")
     parser.add_argument("--check-system", action="store_true", help="Run system diagnostics")
     parser.add_argument("--auto-confirm", action="store_true", help="Auto-confirm safe actions without prompt")
@@ -134,6 +151,27 @@ def run_cli():
 
     if args.test_mic:
         test_microphone_diagnostics()
+        return
+
+    if args.build_app:
+        build_macos_app()
+        return
+
+    if args.install_service:
+        from nova.ui.service import install_launch_agent
+        res = install_launch_agent()
+        console.print(f"[bold green]{res['message']}[/bold green]")
+        return
+
+    if args.uninstall_service:
+        from nova.ui.service import uninstall_launch_agent
+        res = uninstall_launch_agent()
+        console.print(f"[yellow]{res['message']}[/yellow]")
+        return
+
+    if args.menubar:
+        from nova.ui.menubar import launch_menubar_app
+        launch_menubar_app(model_name=args.model)
         return
 
     display_banner()

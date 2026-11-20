@@ -105,10 +105,32 @@ Enable spoken voice responses:
 python main.py --voice
 ```
 
-Enable always-on hands-free **"Hey Nova"** wake word detection (no keyboard needed!):
+Enable always-on hands-free **"Hey Nova"** wake word detection:
 ```bash
 python main.py --wake
 ```
+
+### 6. Run Without Terminal (Native macOS Menu Bar App)
+You can run Nova completely in the background without keeping a Terminal window open:
+
+#### Option A: Double-Click `Nova.app`
+Double-click `Nova.app` directly from Finder or your Desktop!
+- A `🎙️ Nova` icon appears in your top macOS Menu Bar.
+- Say *"Hey Nova"* at any time to give voice instructions.
+- Click the Menu Bar icon to **Pause**, **Resume**, or **Quit**.
+- Or say *"Hey Nova, go to sleep"* to pause hands-free!
+
+#### Option B: Launch from Command Line
+```bash
+python main.py --menubar
+```
+
+#### Option C: Start Automatically on Mac Login
+Run:
+```bash
+python main.py --install-service
+```
+Nova will automatically start as a native background service whenever you log into your Mac.
 
 ---
 
